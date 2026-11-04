@@ -5,4 +5,4 @@ permissions:
   contents: read
 jobs:
   security:
-    uses: NeutralAIz/ci-shared/.github/workflows/security-scan.yml@f7088b169cb9cc68f805d4131b8124f99af14aad
+    uses: NeutralAIz/ci-shared/.github/workflows/security-scan.yml@24520b25bea49ae1f0388b980db7a5b7e9568d7e
