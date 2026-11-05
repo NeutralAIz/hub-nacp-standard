@@ -5,7 +5,7 @@ permissions:
   contents: read
 jobs:
   conformance:
-    uses: NeutralAIz/ci-shared/.github/workflows/pytest-sharded.yml@24520b25bea49ae1f0388b980db7a5b7e9568d7e
+    uses: NeutralAIz/keel/.github/workflows/pytest-sharded.yml@e6bda8001bfc441df4a078365a77375524a1ab4d
     with:
       paths: conformance
       shard_count: 1

@@ -12,14 +12,14 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python
-      uses: NeutralAIz/ci-shared/actions/python@24520b25bea49ae1f0388b980db7a5b7e9568d7e
+      uses: NeutralAIz/keel/actions/python@e6bda8001bfc441df4a078365a77375524a1ab4d
       with:
         python-version: '3.10'
         requirements: |
           pytest
           jsonschema
           ed25519
-    - uses: NeutralAIz/ci-shared/actions/testkit@24520b25bea49ae1f0388b980db7a5b7e9568d7e
+    - uses: NeutralAIz/keel/actions/testkit@e6bda8001bfc441df4a078365a77375524a1ab4d
     - name: Run conformance tests
       run: |
         pytest -p neutralaiz_testkit --testkit-mode=report conformance/
