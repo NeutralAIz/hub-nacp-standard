@@ -1,0 +1,4 @@
+# Conformance dependencies already required by conformance/README.md and CI.
+pytest
+jsonschema
+ed25519
