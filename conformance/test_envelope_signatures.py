@@ -6,7 +6,7 @@ Keys are generated solely for each test and never stored or logged.
 import base64
 from copy import deepcopy
 
-import ed25519
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 import pytest
 
 import test_envelope as binding
@@ -28,7 +28,8 @@ def envelope():
 
 
 def test_signed_envelope_verifies_with_independent_ed25519(envelope):
-    signing_key, verifying_key = ed25519.create_keypair()
+    signing_key = Ed25519PrivateKey.generate()
+    verifying_key = signing_key.public_key()
     original = deepcopy(envelope)
     signed = binding.sign_envelope(envelope, signing_key)
     assert envelope == original
@@ -45,7 +46,8 @@ def test_signed_envelope_verifies_with_independent_ed25519(envelope):
 
 @pytest.mark.parametrize("target", ["payload", "to", "signature", "wrong_key"])
 def test_signed_envelope_rejects_tampering(envelope, target):
-    signing_key, verifying_key = ed25519.create_keypair()
+    signing_key = Ed25519PrivateKey.generate()
+    verifying_key = signing_key.public_key()
     signed = binding.sign_envelope(envelope, signing_key)
     assert binding.verify_envelope(signed, verifying_key) is True
     altered = deepcopy(signed)
@@ -58,13 +60,13 @@ def test_signed_envelope_rejects_tampering(envelope, target):
         raw[0] ^= 1
         altered["signature"] = base64.b64encode(raw).decode("ascii")
     else:
-        _, verifying_key = ed25519.create_keypair()
+        verifying_key = Ed25519PrivateKey.generate().public_key()
     assert binding.verify_envelope(altered, verifying_key) is False
 
 
 @pytest.mark.parametrize("signature", [None, "", "not base64!", "AA=="])
 def test_signed_envelope_rejects_missing_or_malformed_signature(envelope, signature):
-    _, verifying_key = ed25519.create_keypair()
+    verifying_key = Ed25519PrivateKey.generate().public_key()
     if signature is not None:
         envelope["signature"] = signature
     assert binding.verify_envelope(envelope, verifying_key) is False
