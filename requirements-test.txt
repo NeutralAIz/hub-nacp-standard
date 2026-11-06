@@ -1,0 +1,5 @@
+# Q-2866 rank 3, lead round 4: cryptography replaces ed25519 1.5, whose
+# versioneer build fails on Python 3.12 (runner 42128417275: SafeConfigParser).
+pytest
+jsonschema
+cryptography

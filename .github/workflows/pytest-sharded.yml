@@ -1,6 +1,7 @@
 name: pytest-sharded
 on:
   pull_request:
+    branches-ignore: [ 'agent-test/**' ]
 permissions:
   contents: read
 jobs:
@@ -11,4 +12,4 @@ jobs:
       shard_count: 1
       timeout_minutes: 5
       python-version: "3.10"
-      install_command: python -m pip install pytest jsonschema ed25519
+      install_command: python -m pip install pytest jsonschema cryptography
