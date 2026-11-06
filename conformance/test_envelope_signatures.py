@@ -70,3 +70,24 @@ def test_signed_envelope_rejects_missing_or_malformed_signature(envelope, signat
     if signature is not None:
         envelope["signature"] = signature
     assert binding.verify_envelope(envelope, verifying_key) is False
+
+
+def test_fixed_non_ascii_signature_vector():
+    # Source: NACP_SPECIFICATION.md §8.1.2 and Q-2866 review r14 F1.
+    # Public fixture seed, not an operational key. Expected signature was generated
+    # directly over the literal bytes below, without canonical_json/sign_envelope.
+    signing_key = Ed25519PrivateKey.from_private_bytes(bytes(range(32)))
+    verifying_key = signing_key.public_key()
+    envelope = {"version": "1.1", "payload": {"text": "café 🌍"}}
+    expected_bytes = b'{"payload":{"text":"caf\xc3\xa9 \xf0\x9f\x8c\x8d"},"version":"1.1"}'
+    expected_signature = bytes.fromhex(
+        "fb8e2eb0e92e876ff3ef7dbb99757298023a49f21002ecbcd351913ce8b240792"
+        "d77ce76f3b24d20a9da126407393b7985aa2bea91e3b693f3f640e4548c1209"
+    )
+    vector = {**envelope, "signature": base64.b64encode(expected_signature).decode("ascii")}
+    assert binding.canonical_json(vector).encode("utf-8") == expected_bytes
+    verifying_key.verify(expected_signature, expected_bytes)
+    assert binding.verify_envelope(vector, verifying_key) is True
+    signed = binding.sign_envelope(envelope, signing_key)
+    assert base64.b64decode(signed["signature"], validate=True) == expected_signature
+    verifying_key.verify(base64.b64decode(signed["signature"], validate=True), expected_bytes)
