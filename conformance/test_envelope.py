@@ -10,7 +10,7 @@ def canonical_json(envelope: dict) -> str:
     # 3. Signature exclusion: the signature field is REMOVED
     canonical = {k: v for k, v in envelope.items() if k != "signature"}
     # 2. Serialization: sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    return json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
 
 def sign_envelope(envelope: dict, signing_key) -> dict:
     """Sign the optional §8.1 binding without changing the caller's envelope."""
