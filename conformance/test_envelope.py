@@ -1,5 +1,9 @@
+import base64
+import binascii
 import json
-import pytest
+
+from cryptography.exceptions import InvalidSignature
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 def canonical_json(envelope: dict) -> str:
     # §8.1.2 Canonical JSON for signing
@@ -7,6 +11,25 @@ def canonical_json(envelope: dict) -> str:
     canonical = {k: v for k, v in envelope.items() if k != "signature"}
     # 2. Serialization: sort_keys=True, separators=(",", ":"), ensure_ascii=False
     return json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+def sign_envelope(envelope: dict, signing_key) -> dict:
+    """Sign the optional §8.1 binding without changing the caller's envelope."""
+    signature = signing_key.sign(canonical_json(envelope).encode("utf-8"))
+    return {**envelope, "signature": base64.b64encode(signature).decode("ascii")}
+
+
+def verify_envelope(envelope: dict, verifying_key) -> bool:
+    """Reject missing, malformed and invalid signatures for the §8.1 binding."""
+    signature = envelope.get("signature")
+    if not isinstance(signature, str):
+        return False
+    try:
+        raw = base64.b64decode(signature, validate=True)
+        verifying_key.verify(raw, canonical_json(envelope).encode("utf-8"))
+    except (binascii.Error, ValueError, InvalidSignature):
+        return False
+    return True
+
 
 def test_canonical_json_identity():
     envelope = {
@@ -47,7 +70,11 @@ def test_canonical_json_omission():
     # Let's test what the snippet produces.
     assert '"reply_to":null' in canonical
 
-@pytest.mark.skip(reason="Verification requires ed25519 library")
 def test_signature_verification():
-    # In a real test, we would use ed25519 to sign and verify
-    pass
+    # Source: Q-2866 rank 3 finding; replace the inactive placeholder with §8.1 coverage.
+    signing_key = Ed25519PrivateKey.generate()
+    envelope = {"version": "1.1", "payload": {"contract_id": "contract-1"}}
+    signed = sign_envelope(envelope, signing_key)
+    assert verify_envelope(signed, signing_key.public_key()) is True
+    signed["payload"] = {"contract_id": "tampered"}
+    assert verify_envelope(signed, signing_key.public_key()) is False
