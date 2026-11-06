@@ -2,12 +2,14 @@ name: NACP Conformance
 
 on:
   push:
-    branches: [ main ]
+    branches-ignore: [ 'agent-test/**' ]
   pull_request:
     branches: [ main ]
 
 jobs:
   test:
+    # Preserve main-only push execution while excluding scratch refs at the trigger.
+    if: github.event_name != 'push' || github.ref == 'refs/heads/main'
     runs-on: any
     steps:
     - uses: actions/checkout@v3
@@ -18,7 +20,7 @@ jobs:
         requirements: |
           pytest
           jsonschema
-          ed25519
+          cryptography
     - uses: NeutralAIz/keel/actions/testkit@e6bda8001bfc441df4a078365a77375524a1ab4d
     - name: Run conformance tests
       run: |
