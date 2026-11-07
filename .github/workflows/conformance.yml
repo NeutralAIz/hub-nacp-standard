@@ -10,18 +10,19 @@ jobs:
   test:
     # Preserve main-only push execution while excluding scratch refs at the trigger.
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
-    runs-on: any
+    # PUBLIC repo: no runner group allows public repos; GitHub-hosted ubuntu-latest, CIS035 warning accepted (Prime 33029796, 3d3badc7).
+    runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v3
     - name: Set up Python
-      uses: NeutralAIz/keel/actions/python@e6bda8001bfc441df4a078365a77375524a1ab4d
+      uses: NeutralAIz/keel/actions/python@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
       with:
         python-version: '3.10'
         requirements: |
           pytest
           jsonschema
           cryptography
-    - uses: NeutralAIz/keel/actions/testkit@e6bda8001bfc441df4a078365a77375524a1ab4d
+    - uses: NeutralAIz/keel/actions/testkit@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
     - name: Run conformance tests
       run: |
-        pytest -p neutralaiz_testkit --testkit-mode=report conformance/
+        pytest -p keel_testkit --testkit-mode=report conformance/

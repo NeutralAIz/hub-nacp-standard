@@ -1,8 +1,13 @@
 name: security-scan
 on:
+  # Q-2923: also scan main itself; commits that land without a PR were never scanned.
+  push:
+    branches: [main]
+  workflow_dispatch:
   pull_request:
 permissions:
   contents: read
 jobs:
   security:
-    uses: NeutralAIz/keel/.github/workflows/security-scan.yml@e6bda8001bfc441df4a078365a77375524a1ab4d
+    # TODO(Q-2923): bump to the keel release tag once Ali cuts it (tag only on a fully green keel main).
+    uses: NeutralAIz/keel/.github/workflows/security-scan.yml@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c

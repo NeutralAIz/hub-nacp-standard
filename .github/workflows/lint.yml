@@ -5,6 +5,6 @@ permissions:
   contents: read
 jobs:
   ci-lint:
-    uses: NeutralAIz/keel/.github/workflows/lint.yml@e6bda8001bfc441df4a078365a77375524a1ab4d
+    uses: NeutralAIz/keel/.github/workflows/lint.yml@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
     with:
       require-routing: true
