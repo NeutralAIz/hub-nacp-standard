@@ -10,4 +10,4 @@ permissions:
 jobs:
   security:
     # TODO(Q-2923): bump to the keel release tag once Ali cuts it (tag only on a fully green keel main).
-    uses: NeutralAIz/keel/.github/workflows/security-scan.yml@3155bce9e0b81932f13ea4db1a781f5771d3620b
+    uses: NeutralAIz/keel/.github/workflows/security-scan.yml@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
