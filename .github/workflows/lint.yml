@@ -1,3 +1,11 @@
+# REDUCED inline of keel's lint (Q-2923 / Q-3024, hub-nacp-standard#7).
+# hub-nacp-standard is a PUBLIC repo and cannot call the private keel lint action. Andrew, R1107-012: "Keep it public:
+# copy the checks into it". NO step below calls any NeutralAIz/keel workflow or action.
+# keel's lint is lint/ci_lint.py at 17a7eec9933a5bdf6e86198e3b87bebfea175280 (lint/action.yml, reusable workflow
+# .github/workflows/lint.yml fetched at ef0f4fb4b0caebb3a299502bdb43aeb15162b23c). That tool is ~3.5 MB with 49 rules and
+# depends on keel's core/ and routing registry, so it cannot be copied here. This file runs the small subset below that
+# a public repo can meet on its own; everything else is listed as OMITTED in NOTES.md. The lint_workflows.py script is
+# a minimal re-implementation of those rules, not a copy of keel code.
 name: lint
 on:
   pull_request:
@@ -5,6 +13,95 @@ permissions:
   contents: read
 jobs:
   ci-lint:
-    uses: NeutralAIz/keel/.github/workflows/lint.yml@e6bda8001bfc441df4a078365a77375524a1ab4d
-    with:
-      require-routing: true
+    # Job name keeps the check name the keel-calling version had: "ci-lint / ci-lint".
+    name: ci-lint / ci-lint
+    # PUBLIC repo: no runner group allows public repos; GitHub-hosted ubuntu-latest. The CIS035 hosted-label warning is
+    # accepted (R1107-012; Prime 33029796, 3d3badc7).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: PyYAML 6.0.2 (keel lint/requirements.txt)
+        run: python3 -m pip install --quiet PyYAML==6.0.2
+      - name: lint .github/workflows (reduced subset of keel ci_lint)
+        run: |
+          cat > "$RUNNER_TEMP/lint_workflows.py" <<'PY'
+          """Reduced workflow lint. Errors exit 1; warnings only annotate (keel marks these rules LEVEL = warning).
+          Errors: parse failure, HUB001. Warnings (keel ids): CIS024 permissions, CIS041 action pin,
+          CIS035 hosted label (accepted here, R1107-012), CIS027 duplicate triggers, CIS023 untrusted expression in run,
+          HUB001 private-keel (a LOCAL rule, not a keel rule: a private keel call in a public repo can never resolve, so it is an error)."""
+          import re, sys
+          from pathlib import Path
+          import yaml
+
+          SHA = re.compile(r"[0-9a-fA-F]{40}\Z")
+          DIGEST = re.compile(r"docker://[^\s@]+@sha256:[0-9a-fA-F]{64}\Z")
+          HOSTED = re.compile(r"\b(?:ubuntu|windows|macos)-(?:latest|slim|\d[\w.-]*)\b", re.I)
+          EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
+          UNTRUSTED = re.compile(r"github\.(?:event\.(?:issue|pull_request|comment|review|head_commit|pages|commits|discussion)\b"
+                                 r"[\w.\[\]*'-]*|head_ref)|github\.event\.workflow_run\.(?:head_branch|head_commit|display_title)", re.I)
+          errors = warnings = 0
+
+
+          def emit(level, path, msg):
+              global errors, warnings
+              if level == "error":
+                  errors += 1
+              else:
+                  warnings += 1
+              print(f"::{level} file={path}::{msg}")
+
+
+          def steps_of(job):
+              return [s for s in (job.get("steps") or []) if isinstance(s, dict)]
+
+
+          for path in sorted(Path(".github/workflows").glob("*.y*ml")):
+              try:
+                  wf = yaml.safe_load(path.read_text())
+              except Exception as e:  # noqa: BLE001
+                  emit("error", path, f"unparseable workflow: {type(e).__name__}")
+                  continue
+              if not isinstance(wf, dict) or not isinstance(wf.get("jobs"), dict):
+                  emit("error", path, "workflow has no jobs mapping")
+                  continue
+              jobs = wf["jobs"]
+              on = wf.get(True, wf.get("on"))  # PyYAML reads the bare key `on` as True
+              if "permissions" not in wf and not any(isinstance(j, dict) and "permissions" in j for j in jobs.values()):
+                  emit("warning", path, "CIS024 workflow needs explicit top-level or per-job permissions")
+              if isinstance(on, dict) and "push" in on and "pull_request" in on:
+                  push = on["push"] or {}
+                  if not any(k in push for k in ("branches", "branches-ignore", "tags", "tags-ignore")):
+                      emit("warning", path, "CIS027 push plus pull_request can duplicate feature-branch runs; restrict push branches")
+              for job_id, job in jobs.items():
+                  if not isinstance(job, dict):
+                      continue
+                  runs_on = job.get("runs-on")
+                  if isinstance(runs_on, str) and HOSTED.search(runs_on):
+                      emit("warning", path, f"CIS035 job {job_id}: GitHub-hosted label {HOSTED.search(runs_on).group(0)} "
+                           "(accepted for this public repo, R1107-012)")
+                  uses = [job["uses"]] if "uses" in job else []
+                  uses += [s["uses"] for s in steps_of(job) if "uses" in s]
+                  for u in uses:
+                      u = str(u).strip()
+                      if u.startswith("./") or DIGEST.fullmatch(u):
+                          continue
+                      if u.lower().startswith("neutralaiz/keel"):
+                          emit("error", path, f"HUB001 private-keel job {job_id}: {u.split('@')[0]} is private keel; a public repo cannot call it")
+                      if not SHA.fullmatch(u.rsplit("@", 1)[-1]) or "@" not in u:
+                          emit("warning", path, f"CIS041 job {job_id}: {u} is not pinned to a full 40-hex commit sha")
+                  for s in steps_of(job):
+                      run = s.get("run")
+                      if not isinstance(run, str):
+                          continue
+                      for m in EXPR.finditer(run):
+                          if UNTRUSTED.search(m.group(1)):
+                              emit("warning", path, f"CIS023 job {job_id}: untrusted expression in run: pass it through env:")
+          print(f"lint: {errors} error(s), {warnings} warning(s)")
+          sys.exit(1 if errors else 0)
+          PY
+          python3 "$RUNNER_TEMP/lint_workflows.py"

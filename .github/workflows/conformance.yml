@@ -1,3 +1,9 @@
+# Inlined (Q-2923 / Q-3024, hub-nacp-standard#7): hub-nacp-standard is a PUBLIC repo and cannot call private keel actions.
+# Andrew, R1107-012: "Keep it public: copy the checks into it". NO step below calls any NeutralAIz/keel workflow or action.
+# Replaces keel actions/python (setup-python pin; same pip install) and actions/testkit + `-p keel_testkit --testkit-mode=report`
+# (keel @17a7eec9933a5bdf6e86198e3b87bebfea175280, actions/testkit/action.yml and test/python/keel_testkit/plugin_parts/*).
+# The testkit plugin is NOT copied: it is 3.3k lines and its --testkit-mode=report only RECORDS guard violations; see NOTES.md
+# for the exact behaviour differences. Test files and assertions are untouched.
 name: NACP Conformance
 
 on:
@@ -6,22 +12,32 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
   test:
     # Preserve main-only push execution while excluding scratch refs at the trigger.
     if: github.event_name != 'push' || github.ref == 'refs/heads/main'
-    runs-on: any
+    # PUBLIC repo: no runner group allows public repos; GitHub-hosted ubuntu-latest, CIS035 warning accepted (Prime 33029796, 3d3badc7; R1107-012).
+    runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      with:
+        persist-credentials: false
     - name: Set up Python
-      uses: NeutralAIz/keel/actions/python@e6bda8001bfc441df4a078365a77375524a1ab4d
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
       with:
         python-version: '3.10'
-        requirements: |
-          pytest
-          jsonschema
-          cryptography
-    - uses: NeutralAIz/keel/actions/testkit@e6bda8001bfc441df4a078365a77375524a1ab4d
+    - name: Install test dependencies
+      run: python -m pip install pytest jsonschema cryptography
     - name: Run conformance tests
       run: |
-        pytest -p neutralaiz_testkit --testkit-mode=report conformance/
+        python -m pytest conformance/ --junitxml="$RUNNER_TEMP/conformance-junit.xml"
+    - name: Upload JUnit report
+      if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      with:
+        name: conformance-junit
+        path: ${{ runner.temp }}/conformance-junit.xml
+        if-no-files-found: warn
