@@ -1,3 +1,11 @@
+# Inlined copy of keel's pytest-sharded for this repo's one call (Q-2923 / Q-3024, hub-nacp-standard#7).
+# hub-nacp-standard is a PUBLIC repo and cannot call private keel reusable workflows or actions. Andrew, R1107-012:
+# "Keep it public: copy the checks into it". NO job below calls any NeutralAIz/keel workflow or action.
+# Copied from NeutralAIz/keel at 17a7eec9933a5bdf6e86198e3b87bebfea175280 (actions/python/action.yml for the setup-python
+# pin and install step; sharded.yml -> pytest-sharded-compat.yml as fetched at ef0f4fb4b0caebb3a299502bdb43aeb15162b23c for
+# the shard run and the evidence verdict). The plan, collect and cache machinery is reduced away: one shard of one path.
+# The previous call was: paths conformance, shard_count 1, timeout_minutes 5, python-version 3.10,
+# install_command "python -m pip install pytest jsonschema cryptography".
 name: pytest-sharded
 on:
   pull_request:
@@ -5,11 +13,131 @@ on:
 permissions:
   contents: read
 jobs:
-  conformance:
-    uses: NeutralAIz/keel/.github/workflows/pytest-sharded.yml@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
-    with:
-      paths: conformance
-      shard_count: 1
-      timeout_minutes: 5
-      python-version: "3.10"
-      install_command: python -m pip install pytest jsonschema cryptography
+  shard:
+    # Check name the keel-calling version had for its one shard.
+    name: conformance / sharded / pytest / shard (0)
+    # PUBLIC repo: no runner group allows public repos; GitHub-hosted ubuntu-latest. The CIS035 hosted-label warning is
+    # accepted (R1107-012; Prime 33029796, 3d3badc7).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      PYTEST_SHARDED_INDEX: "0"
+      PYTEST_SHARDED_COUNT: "1"
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.10"
+      - name: Extra install
+        run: python -m pip install pytest jsonschema cryptography
+      - name: List every file pytest collects
+        run: |
+          set -euo pipefail
+          results="$RUNNER_TEMP/pytest-sharded-results"
+          mkdir -p "$results"
+          python -m pytest --collect-only -q conformance > "$RUNNER_TEMP/collect.log"
+          grep -E '^[^ ]+\.py::' "$RUNNER_TEMP/collect.log" | sed 's/::.*//' | sort -u > "$results/collected-files.txt"
+          echo "pytest collects $(grep -c . "$results/collected-files.txt") test files"
+      - name: Run this shard's files
+        id: run
+        run: |
+          results="$RUNNER_TEMP/pytest-sharded-results"
+          mkdir -p "$results"
+          echo "shard $PYTEST_SHARDED_INDEX/$PYTEST_SHARDED_COUNT: conformance"
+          set +e
+          python -m pytest conformance --junitxml="$results/junit.xml"
+          status=$?
+          set -e
+          if [ ! -f "$results/junit.xml" ]; then echo "FAIL: no JUnit report"; exit 1; fi
+          exit "$status"
+      - name: Shard status
+        if: always()
+        env:
+          RUN: ${{ steps.run.outcome }}
+          JOB: ${{ job.status }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          if [ "$RUN" = success ]; then
+            outcome=success
+          elif [ "$JOB" = cancelled ]; then
+            outcome=cancelled
+          else
+            outcome=failure
+          fi
+          mkdir -p "$RUNNER_TEMP/pytest-sharded-results"
+          printf '{"index": %s, "outcome": "%s", "run": "%s", "attempt": %s}\n' \
+            "$PYTEST_SHARDED_INDEX" "$outcome" "$RUN" "$ATTEMPT" > "$RUNNER_TEMP/pytest-sharded-results/status.json"
+          cat "$RUNNER_TEMP/pytest-sharded-results/status.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        if: always()
+        with:
+          name: pytest-sharded-shard-0-a${{ github.run_attempt }}
+          path: ${{ runner.temp }}/pytest-sharded-results/
+          if-no-files-found: warn
+
+  evidence:
+    # Check name the keel-calling version had for its verdict job.
+    name: conformance / sharded / pytest / evidence
+    needs: [shard]
+    if: ${{ always() }}
+    # PUBLIC repo, hosted runner: see the shard job (R1107-012, CIS035 warning accepted).
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        # A missing artifact must not stop the step here: the verdict below prints the reason.
+        continue-on-error: true
+        with:
+          pattern: pytest-sharded-shard-0-a*
+          path: ${{ runner.temp }}/shard-results
+      - name: Every shard ran and passed, and no collected file was dropped
+        env:
+          SHARD_RESULT: ${{ needs.shard.result }}
+        run: |
+          python3 - "$RUNNER_TEMP/shard-results" <<'PY'
+          import json, os, re, sys, xml.etree.ElementTree as ET
+          from pathlib import Path
+          root, failures = Path(sys.argv[1]), []
+          shard_result = os.environ["SHARD_RESULT"]
+          # A rerun of failed jobs keeps earlier attempts' artifacts: take the newest attempt (keel attempts.py pick).
+          dirs = sorted(root.glob("pytest-sharded-shard-0-a*"), key=lambda p: int(re.search(r"-a(\d+)$", p.name).group(1))) if root.exists() else []
+          lines = [f"shard job result: {shard_result}"]
+          if shard_result != "success":
+              failures.append(f"shard job result is {shard_result}, not success")
+          if not dirs:
+              failures.append("no shard artifact found (download failed or the shard uploaded nothing)")
+          else:
+              d = dirs[-1]
+              status = d / "status.json"
+              if not status.is_file():
+                  failures.append("shard 0 wrote no status.json")
+              elif json.loads(status.read_text()).get("outcome") != "success":
+                  failures.append("shard 0 status.json outcome is not success")
+              junit = d / "junit.xml"
+              if not junit.is_file():
+                  failures.append("shard 0 wrote no junit.xml")
+              else:
+                  tree = ET.parse(junit)
+                  cases = list(tree.iter("testcase"))
+                  bad = [c for c in cases if c.find("failure") is not None or c.find("error") is not None]
+                  lines.append(f"tests={len(cases)} failing={len(bad)}")
+                  if len(cases) < 1:  # min_tests 1 (keel sharded.yml legacy_pytest)
+                      failures.append("no tests ran (min_tests 1)")
+                  if bad:
+                      failures.append(f"{len(bad)} test case(s) failed or errored")
+                  collected = [l.strip() for l in (d / "collected-files.txt").read_text().splitlines() if l.strip()] if (d / "collected-files.txt").is_file() else []
+                  if not collected:
+                      failures.append("collected-files.txt missing or empty")
+                  classes = {c.get("classname", "") for c in cases}
+                  for f in collected:
+                      mod = f[:-3].replace("/", ".") if f.endswith(".py") else f
+                      if not any(c == mod or c.startswith(mod + ".") for c in classes):
+                          failures.append(f"collected file {f} has no test result in the shard (dropped)")
+                  lines.append(f"collected files={len(collected)}")
+          print("\n".join(lines))
+          for f in failures:
+              print(f"FAIL: {f}")
+          sys.exit(1 if failures else 0)
+          PY

@@ -1,3 +1,14 @@
+# Inlined copy of keel's security-scan (Q-2923 / Q-3024, hub-nacp-standard#7).
+# hub-nacp-standard is a PUBLIC repo: GitHub never lets a public repo call a private repo's reusable workflows or
+# composite actions, so keel's checks are copied here as plain jobs. Andrew, R1107-012: "Keep it public: copy the checks
+# into it". NO job below calls any NeutralAIz/keel workflow or action.
+# Copied from NeutralAIz/keel at 17a7eec9933a5bdf6e86198e3b87bebfea175280 (actions/security/action.yml, security/rules.d/*,
+# security/data/credential_paths.json, security/build_config.py, tools.d/{gitleaks,trivy,bandit,semgrep}.toml) and from the
+# reusable workflow .github/workflows/security-scan.yml as fetched at ef0f4fb4b0caebb3a299502bdb43aeb15162b23c.
+# secrets  gitleaks 8.28.0 (sha256-checked), keel's provider-token and credential-filename rules: BLOCKS on any finding.
+# trivy    trivy 0.74.0 fs (vuln + misconfig): DIFF level on a pull request (fails on a vulnerability in a file the PR changes);
+#          advise only elsewhere (push / dispatch have no base).
+# advise   semgrep 1.131.0 and bandit 1.8.6: report only, never fails the run.
 name: security-scan
 on:
   # Q-2923: also scan main itself; commits that land without a PR were never scanned.
@@ -8,6 +19,403 @@ on:
 permissions:
   contents: read
 jobs:
-  security:
-    # TODO(Q-2923): bump to the keel release tag once Ali cuts it (tag only on a fully green keel main).
-    uses: NeutralAIz/keel/.github/workflows/security-scan.yml@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
+  secrets:
+    # Job name keeps the check name the keel-calling version had: "security / secrets".
+    name: security / secrets
+    # PUBLIC repo: no runner group allows public repos; GitHub-hosted ubuntu-latest. The CIS035 hosted-label warning is
+    # accepted (R1107-012; Prime 33029796, 3d3badc7).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      # tomllib (Python 3.11+) builds the gitleaks config below; same setup-python pin keel uses.
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: gitleaks 8.28.0, sha256-checked before it is unpacked
+        env:
+          DEST: ${{ runner.temp }}/keel-security-gitleaks
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEST"
+          url=https://github.com/gitleaks/gitleaks/releases/download/v8.28.0/gitleaks_8.28.0_linux_x64.tar.gz
+          sha=a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb
+          curl -fsSL --retry 3 -o "$DEST/gitleaks.tar.gz" "$url"
+          echo "$sha  $DEST/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$DEST/gitleaks.tar.gz" -C "$DEST" gitleaks
+          "$DEST/gitleaks" version | grep -E '8\.28\.0'
+      - name: build the gitleaks config (keel security/rules.d + build_config.py, copied)
+        env:
+          CFG_DIR: ${{ runner.temp }}/keel-gitleaks-config
+        run: |
+          set -euo pipefail
+          mkdir -p "$CFG_DIR"
+          cat > "$CFG_DIR/00-base.toml" <<'TOML'
+          # Base policy: placeholder and fixture shapes, never path exemptions.
+          title = "NeutralAIz shared gitleaks config"
+
+          [extend]
+          useDefault = true
+
+          [[allowlists]]
+          description = "Documentation showing the SHAPE of a credential in an example command (from Demo quality/gitleaks.toml)"
+          regexTarget = "match"
+          regexes = [
+            '''(?i)(REPLACE_ME|CHANGEME|<[a-z-]+>|your[-_]?(api[-_]?)?key|xxx+|placeholder|example\.com)''',
+          ]
+
+          [fixture_shape_allowlist]
+          description = "value shaped like an intentional test fixture (NADN FIXTURE_WORDS)"
+          regexTarget = "secret"
+          regexes = ['''(?i)(?:test|fake|dummy|example|sample|placeholder|redact|mask|notreal|stub|mock|invalid|changeme|your-|yourkey|xxxx|abcdef|123456|deadbeef|sentinel|canary|(?:^|[_-])(?:foo|bar|baz)(?:$|[_-]))''']
+          TOML
+          cat > "$CFG_DIR/10-provider-tokens.toml" <<'TOML'
+          # Provider token shapes, independent of any repository.
+          [[rules]]
+          id = "huggingface-token"
+          description = "Provider token shape: huggingface-token"
+          regex = '''hf_[A-Za-z0-9]{32,40}'''
+          keywords = ["hf_"]
+
+          [[rules]]
+          id = "openai-project-key"
+          description = "Provider token shape: openai-project-key"
+          regex = '''sk-proj-[A-Za-z0-9_\-]{40,200}'''
+          keywords = ["sk-proj-"]
+
+          [[rules]]
+          id = "openai-svcacct-key"
+          description = "Provider token shape: openai-svcacct-key"
+          regex = '''sk-svcacct-[A-Za-z0-9_\-]{40,200}'''
+          keywords = ["sk-svcacct-"]
+
+          [[rules]]
+          id = "openai-admin-key"
+          description = "Provider token shape: openai-admin-key"
+          regex = '''sk-admin-[A-Za-z0-9_\-]{40,200}'''
+          keywords = ["sk-admin-"]
+
+          [[rules]]
+          id = "anthropic-key"
+          description = "Provider token shape: anthropic-key"
+          regex = '''sk-ant-[A-Za-z0-9_\-]{40,200}'''
+          keywords = ["sk-ant-"]
+
+          [[rules]]
+          id = "openai-classic-key"
+          description = "Provider token shape: openai-classic-key"
+          regex = '''sk-[A-Za-z0-9]{32,64}'''
+          keywords = ["sk-"]
+
+          [[rules]]
+          id = "wrapper-key"
+          description = "Provider token shape: wrapper-key"
+          regex = '''nak2?_[A-Za-z0-9_\-]{20,100}'''
+          keywords = ["nak"]
+
+          [[rules.allowlists]]
+          description = "NATS negative-ack identifiers such as nak_ack_wait_seconds (NADN NATS_IDENTIFIER): structural, real keys are random"
+          regexTarget = "secret"
+          regexes = ['''^nak2?_[a-z0-9]+(_[a-z0-9]+)+$''']
+
+          [[rules]]
+          id = "github-pat"
+          description = "Provider token shape: github-pat"
+          regex = '''ghp_[A-Za-z0-9]{36}'''
+          keywords = ["ghp_"]
+
+          [[rules]]
+          id = "github-fine-grained-pat"
+          description = "Provider token shape: github-fine-grained-pat"
+          regex = '''github_pat_[A-Za-z0-9_]{60,100}'''
+          keywords = ["github_pat_"]
+
+          [[rules]]
+          id = "github-oauth-token"
+          description = "Provider token shape: github-oauth-token"
+          regex = '''gho_[A-Za-z0-9]{36}'''
+          keywords = ["gho_"]
+
+          [[rules]]
+          id = "aws-access-key-id"
+          description = "Provider token shape: aws-access-key-id"
+          regex = '''AKIA[0-9A-Z]{16}'''
+          keywords = ["akia"]
+
+          [[rules]]
+          id = "aws-temp-access-key-id"
+          description = "Provider token shape: aws-temp-access-key-id"
+          regex = '''ASIA[0-9A-Z]{16}'''
+          keywords = ["asia"]
+
+          [[rules]]
+          id = "google-api-key"
+          description = "Provider token shape: google-api-key"
+          regex = '''AIza[0-9A-Za-z_\-]{35}'''
+          keywords = ["aiza"]
+
+          [[rules]]
+          id = "private-key-block"
+          description = "Provider token shape: private-key-block"
+          regex = '''-----BEGIN (?:RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----'''
+          keywords = ["private key-"]
+
+          [[rules]]
+          id = "slack-token"
+          description = "Provider token shape: slack-token"
+          regex = '''xox[baprs]-[A-Za-z0-9\-]{10,80}'''
+          keywords = ["xox"]
+
+          [[rules]]
+          id = "stripe-live-key"
+          description = "Provider token shape: stripe-live-key"
+          regex = '''(?:sk|rk)_live_[A-Za-z0-9]{20,60}'''
+          keywords = ["_live_"]
+
+          [[rules]]
+          id = "tavily-key"
+          description = "Provider token shape: tavily-key"
+          regex = '''tvly-[A-Za-z0-9_\-]{20,60}'''
+          keywords = ["tvly-"]
+
+          [[rules]]
+          id = "groq-key"
+          description = "Provider token shape: groq-key"
+          regex = '''gsk_[A-Za-z0-9]{40,60}'''
+          keywords = ["gsk_"]
+
+          [[rules]]
+          id = "replicate-token"
+          description = "Provider token shape: replicate-token"
+          regex = '''r8_[A-Za-z0-9]{30,50}'''
+          keywords = ["r8_"]
+          TOML
+          cat > "$CFG_DIR/credential_paths.json" <<'JSON'
+          {
+            "patterns": [
+              "(?i)(?:^|/)[^/]+\\.(?:jks|keystore|p12|pfx)$",
+              "(?i)(?:^|/)\\.env(?:\\.[^/]+)?$",
+              "(?i)(?:^|/)(?:id_(?:rsa|dsa|ecdsa|ed25519)|(?:private|privkey|private[-_]key)(?:\\.[^/]+)?|[^/]+\\.key)$"
+            ],
+            "exclude": [
+              "(?i)(?:^|[.\\-_])example(?:$|[.\\-_])",
+              "(?i)(?:^|[.\\-_])template(?:$|[.\\-_])"
+            ]
+          }
+          JSON
+          cat > "$CFG_DIR/build_config.py" <<'PY'
+          # Copied from keel security/build_config.py @ 17a7eec9: one gitleaks config from the fragments above.
+          # Reduced: reads the three inputs from its own directory; the SH-19 shared-credential-shape rule is inlined.
+          import json, re, sys, tomllib
+          from copy import deepcopy
+          from pathlib import Path
+
+          HERE = Path(sys.argv[1])
+          SHARED_SHAPE = (
+              r"gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{12,}|ASIA[0-9A-Z]{12,}"
+              r"|AIza[0-9A-Za-z_-]{20,}|xox[baprs]-[A-Za-z0-9-]{10,}|(?:sk|rk)_live_[A-Za-z0-9]{10,}|hf_[A-Za-z0-9]{20,}"
+              r"|-----BEGIN [A-Z ]*PRIVATE KEY")
+
+
+          def _value(value):
+              if isinstance(value, bool):
+                  return 'true' if value else 'false'
+              return json.dumps(value, ensure_ascii=False)
+
+
+          def _table(data, prefix='', header=None):
+              lines = [header] if header else []
+              for key, value in data.items():
+                  if not isinstance(value, dict) and not (isinstance(value, list) and value and isinstance(value[0], dict)):
+                      lines.append(f'{key} = {_value(value)}')
+              for key, value in data.items():
+                  path = f'{prefix}.{key}' if prefix else key
+                  if isinstance(value, dict):
+                      lines.extend(_table(value, path, f'[{path}]'))
+                  elif isinstance(value, list) and value and isinstance(value[0], dict):
+                      for item in value:
+                          lines.extend(_table(item, path, f'[[{path}]]'))
+              return lines
+
+
+          def _safe_basenames(exclusions):
+              trie = {}
+              prefix, suffix = r'(?i)(?:^|[.\-_])', r'(?:$|[.\-_])'
+              for expression in exclusions:
+                  if not expression.startswith(prefix) or not expression.endswith(suffix):
+                      raise ValueError('credential exclusions must be case-insensitive basename segment shapes')
+                  word = expression[len(prefix):-len(suffix)]
+                  if not re.fullmatch('[a-z]+', word):
+                      raise ValueError('credential exclusion segment must contain letters only')
+                  node = trie
+                  for char in word:
+                      node = node.setdefault(char, {})
+                  node[''] = True
+
+              def complement(node, nonempty=False):
+                  children = sorted(key for key in node if key)
+                  alternatives = [] if '' in node or nonempty else ['']
+                  alternatives.append('[^/._' + re.escape(''.join(children)) + r'\-][^/._\-]*')
+                  for char in children:
+                      alternatives.append(re.escape(char) + complement(node[char]))
+                  return '(?:' + '|'.join(alternatives) + ')'
+
+              empty, nonempty = complement(trie), complement(trie, nonempty=True)
+              segment_end = '(?:[.\\-_]' + empty + ')*'
+              return '(?:' + nonempty + '|[.\\-_]' + empty + ')' + segment_end
+
+
+          def load(name):
+              return tomllib.loads((HERE / name).read_text())
+
+
+          combined = {'rules': [], 'allowlists': []}
+          base = load('00-base.toml')
+          shape = base.pop('fixture_shape_allowlist')
+          for key, value in base.items():
+              if key in ('rules', 'allowlists'):
+                  combined[key].extend(value)
+              else:
+                  combined[key] = value
+          combined['rules'].extend(load('10-provider-tokens.toml')['rules'])
+          catalogue = json.loads((HERE / 'credential_paths.json').read_text())
+          safe_name = _safe_basenames(catalogue['exclude'])
+          excludes = []
+          for pattern in catalogue['exclude']:
+              body = pattern[4:]
+              body = body.replace('(?:^|[.\\-_])', r'(?:^|/)(?:[^/]*[.\-_])?')
+              body = body.replace('(?:$|[.\\-_])', r'(?:$|[.\-_][^/]*$)')
+              excludes.append('(?i)' + body)
+          for i, pattern in enumerate(catalogue['patterns']):
+              combined['rules'].append({
+                  'id': f'credential-file-{i + 1}', 'description': 'Tracked credential filename',
+                  'path': pattern.replace('[^/]+', safe_name), 'fixture_shape_allowlist': False,
+                  'allowlists': [{'description': 'Credential basename shape: ' + shape['description'],
+                                  'regexTarget': 'secret', 'regexes': excludes}]})
+          combined['rules'].append({'id': 'shared-credential-shape', 'description': 'Shared SH-19 credential shapes',
+                                    'regex': SHARED_SHAPE})
+          seen = set()
+          for rule in combined['rules']:
+              if rule['id'] in seen:
+                  raise ValueError('duplicate rule id')
+              seen.add(rule['id'])
+              if rule.pop('fixture_shape_allowlist', True):
+                  rule.setdefault('allowlists', []).append(deepcopy(shape))
+          text = '\n'.join(_table(combined)) + '\n'
+          tomllib.loads(text)
+          (HERE / 'gitleaks.toml').write_text(text)
+          PY
+          python3 "$CFG_DIR/build_config.py" "$CFG_DIR"
+      - name: gitleaks dir scan (blocks on any finding; no value is ever printed)
+        env:
+          BIN: ${{ runner.temp }}/keel-security-gitleaks/gitleaks
+          CFG: ${{ runner.temp }}/keel-gitleaks-config/gitleaks.toml
+          OUT: ${{ runner.temp }}/gl.json
+        run: |
+          set -euo pipefail
+          # Same invocation keel's security/lib/gitleaks_run.py makes. Scanner output is never forwarded: it may carry a value.
+          "$BIN" dir . --config "$CFG" --no-banner --redact=100 --report-format json --report-path "$OUT" \
+            --exit-code 0 --log-level error > /dev/null 2>&1 || { echo "::error::scanner could not run"; exit 2; }
+          python3 - "$OUT" <<'PY'
+          import json, sys
+          from pathlib import Path
+          out = Path(sys.argv[1])
+          raw = json.loads(out.read_text()) if out.exists() else []
+          print(f"secrets [block] total={len(raw)} (no baseline in this repo; this check allows none)")
+          if raw:
+              print(f"BLOCK: {len(raw)} finding(s) of any severity; this check allows none")
+              for r in raw[:50]:
+                  print(f"  {r.get('File', '?')}:{r.get('StartLine', 0)} {r.get('RuleID', '?')}")
+              sys.exit(1)
+          PY
+
+  trivy:
+    name: security / trivy
+    # PUBLIC repo, hosted runner: see the secrets job (R1107-012, CIS035 warning accepted).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: trivy 0.74.0, sha256-checked before it is unpacked
+        env:
+          DEST: ${{ runner.temp }}/keel-security-trivy
+        run: |
+          set -euo pipefail
+          mkdir -p "$DEST"
+          url=https://github.com/aquasecurity/trivy/releases/download/v0.74.0/trivy_0.74.0_Linux-64bit.tar.gz
+          sha=2ae6fe3ee734b7fdf11335663e18c75ea12dccc76062f09f164a3b0f8be4371a
+          curl -fsSL --retry 3 -o "$DEST/trivy.tar.gz" "$url"
+          echo "$sha  $DEST/trivy.tar.gz" | sha256sum -c -
+          tar -xzf "$DEST/trivy.tar.gz" -C "$DEST" trivy
+          "$DEST/trivy" --version | grep -E '0\.74\.0'
+      - name: trivy fs scan (vuln + misconfig)
+        env:
+          BIN: ${{ runner.temp }}/keel-security-trivy/trivy
+          RAW: ${{ runner.temp }}/trivy-raw.json
+        run: |
+          set -euo pipefail
+          "$BIN" fs --scanners vuln,misconfig --format json --output "$RAW" --quiet .
+      - name: diff gate against the pull request base (advise only when there is no base)
+        env:
+          RAW: ${{ runner.temp }}/trivy-raw.json
+          PR_BASE: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          # keel: level diff when a base ref exists (origin/<PR base>), else advise. Same here.
+          python3 - "$RAW" "$PR_BASE" <<'PY'
+          import json, subprocess, sys
+          raw_path, pr_base = sys.argv[1], sys.argv[2]
+          raw = json.load(open(raw_path))
+          results = raw.get('Results') or []
+          vulns, advisories = [], []
+          for result in results:
+              target = result.get('Target', '')
+              for v in result.get('Vulnerabilities') or []:
+                  vulns.append((target, v.get('PkgName', '?'), v.get('VulnerabilityID', 'unknown')))
+              for m in result.get('Misconfigurations') or []:
+                  advisories.append((target, m.get('ID', 'unknown')))
+          # Misconfigurations are advisories: printed, never gated (keel security/cmds/audit.py).
+          for target, ident in sorted(advisories):
+              print(f"advisory misconfiguration {ident} {target}")
+          for target, pkg, ident in sorted(vulns):
+              print(f"{ident} {pkg} {target}")
+          if not pr_base:
+              print(f"trivy [advise] total={len(vulns)} (no pull request base: report only)")
+              sys.exit(0)
+          diff = subprocess.run(['git', 'diff', '--name-only', f'origin/{pr_base}'], capture_output=True, text=True)
+          if diff.returncode:
+              print('::error::git diff against the base failed; is the base ref fetched?')
+              sys.exit(2)
+          touched = set(diff.stdout.split())
+          # This repo has no quality/baselines, so no fingerprint is "known": every vulnerability in a changed file is new.
+          new = [v for v in vulns if v[0] in touched]
+          print(f"trivy [diff] total={len(vulns)} baseline=0 (none yet (first run)) new_on_changed_files={len(new)}")
+          if new:
+              print(f"FAIL: {len(new)} new finding(s) on changed lines/files")
+              for target, pkg, ident in new[:50]:
+                  print(f"  {target}:0 {ident} {pkg}")
+              sys.exit(1)
+          PY
+
+  advise:
+    name: security / advise
+    # PUBLIC repo, hosted runner: see the secrets job (R1107-012, CIS035 warning accepted).
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+      - name: install bandit 1.8.6 and semgrep 1.131.0
+        run: python3 -m pip install --quiet bandit==1.8.6 semgrep==1.131.0
+      - name: bandit and semgrep (advise only; findings are printed, the job never fails the run)
+        run: |
+          python3 -m bandit -r . -q -f txt --exit-zero || true
+          python3 -m semgrep scan --config p/python --metrics off --quiet --disable-version-check . || true
