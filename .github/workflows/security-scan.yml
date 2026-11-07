@@ -1,5 +1,9 @@
 name: security-scan
 on:
+  # Q-2923: also scan main itself; commits that land without a PR were never scanned.
+  push:
+    branches: [main]
+  workflow_dispatch:
   pull_request:
 permissions:
   contents: read
