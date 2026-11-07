@@ -24,4 +24,4 @@ jobs:
     - uses: NeutralAIz/keel/actions/testkit@ef0f4fb4b0caebb3a299502bdb43aeb15162b23c
     - name: Run conformance tests
       run: |
-        pytest -p neutralaiz_testkit --testkit-mode=report conformance/
+        pytest -p keel_testkit --testkit-mode=report conformance/
